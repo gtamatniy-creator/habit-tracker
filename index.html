@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#151821">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Ритм — трекер привычек</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">МОЙ РИТМ</p>
+        <h1 id="screenTitle">Сегодня</h1>
+      </div>
+      <button class="icon-button" id="addHabitButton" aria-label="Добавить привычку">+</button>
+    </header>
+
+    <main>
+      <section class="screen active" id="todayScreen">
+        <div class="date-strip" id="dateStrip"></div>
+        <article class="summary-card">
+          <div>
+            <span class="muted">Выполнено</span>
+            <strong id="summaryText">0 из 0</strong>
+          </div>
+          <div class="progress-ring" id="progressRing"><span id="progressPercent">0%</span></div>
+        </article>
+        <div class="section-heading">
+          <h2 id="selectedDateTitle">Сегодня</h2>
+          <button class="text-button" id="jumpTodayButton">К сегодня</button>
+        </div>
+        <div class="habit-list" id="habitList"></div>
+      </section>
+
+      <section class="screen" id="calendarScreen">
+        <div class="calendar-controls">
+          <button class="icon-button subtle" id="previousMonth" aria-label="Предыдущий месяц">‹</button>
+          <button class="month-title" id="monthPickerButton">
+            <strong id="calendarMonth"></strong>
+            <span id="calendarYear"></span>
+          </button>
+          <button class="icon-button subtle" id="nextMonth" aria-label="Следующий месяц">›</button>
+        </div>
+        <div class="weekday-row">
+          <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+        </div>
+        <div class="calendar-grid" id="calendarGrid"></div>
+        <article class="month-stats">
+          <p class="eyebrow">ИТОГ МЕСЯЦА</p>
+          <div class="stats-row">
+            <div><strong id="monthPercent">0%</strong><span>выполнено</span></div>
+            <div><strong id="monthDone">0</strong><span>отметок</span></div>
+            <div><strong id="bestStreak">0</strong><span>лучшая серия</span></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="screen" id="habitsScreen">
+        <div class="section-heading habits-heading">
+          <div>
+            <p class="muted">Изменения применяются ко всем датам</p>
+            <h2>Мои привычки</h2>
+          </div>
+        </div>
+        <div class="manage-list" id="manageList"></div>
+      </section>
+
+      <section class="screen" id="statsScreen">
+        <article class="hero-stat">
+          <p class="eyebrow">ОБЩИЙ ПРОГРЕСС</p>
+          <strong id="overallPercent">0%</strong>
+          <span>за всё время</span>
+        </article>
+        <div class="section-heading"><h2>По привычкам</h2></div>
+        <div class="stats-list" id="statsList"></div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-screen="today">
+        <span class="nav-icon">✓</span><span>Сегодня</span>
+      </button>
+      <button class="nav-item" data-screen="calendar">
+        <span class="nav-icon">▦</span><span>Календарь</span>
+      </button>
+      <button class="nav-item" data-screen="habits">
+        <span class="nav-icon">≡</span><span>Привычки</span>
+      </button>
+      <button class="nav-item" data-screen="stats">
+        <span class="nav-icon">↗</span><span>Статистика</span>
+      </button>
+    </nav>
+  </div>
+
+  <dialog id="habitDialog">
+    <form method="dialog" id="habitForm">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow" id="dialogEyebrow">НОВАЯ ПРИВЫЧКА</p>
+          <h2 id="dialogTitle">Добавить привычку</h2>
+        </div>
+        <button class="close-button" value="cancel" aria-label="Закрыть">×</button>
+      </div>
+      <label>
+        Название
+        <input id="habitName" maxlength="50" placeholder="Например, тренировка" required>
+      </label>
+      <label>
+        Цель на месяц
+        <div class="goal-input"><input id="habitGoal" type="number" min="1" max="31" value="20" required><span>дней</span></div>
+      </label>
+      <fieldset>
+        <legend>Цвет</legend>
+        <div class="color-options" id="colorOptions"></div>
+      </fieldset>
+      <div class="dialog-actions">
+        <button class="danger-button hidden" type="button" id="deleteHabitButton">Удалить</button>
+        <button class="primary-button" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="monthDialog">
+    <form method="dialog">
+      <div class="dialog-header">
+        <div><p class="eyebrow">ПЕРЕЙТИ К ДАТЕ</p><h2>Месяц и год</h2></div>
+        <button class="close-button" value="cancel" aria-label="Закрыть">×</button>
+      </div>
+      <label>Месяц<select id="monthSelect"></select></label>
+      <label>Год<select id="yearSelect"></select></label>
+      <button class="primary-button full" id="applyMonth" value="default">Показать</button>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
