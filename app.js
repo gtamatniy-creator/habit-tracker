@@ -10,13 +10,17 @@ const defaultState = {
     { id: crypto.randomUUID(), name: "Чтение", goal: 25, color: COLORS[1], createdAt: dateKey(new Date()) },
     { id: crypto.randomUUID(), name: "Без сахара", goal: 30, color: COLORS[2], createdAt: dateKey(new Date()) }
   ],
-  checks: {}
+  checks: {},
+  tasks: {},
+  notes: {},
+  notified: {}
 };
 
 let state = loadState();
 let selectedDate = startOfDay(new Date());
 let calendarDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
 let editingHabitId = null;
+let editingTaskId = null;
 let selectedColor = COLORS[0];
 
 const $ = (selector) => document.querySelector(selector);
@@ -42,7 +46,14 @@ function addDays(date, amount) {
 function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (saved?.habits && saved?.checks) return saved;
+    if (saved?.habits && saved?.checks) {
+      return {
+        ...saved,
+        tasks: saved.tasks || {},
+        notes: saved.notes || {},
+        notified: saved.notified || {}
+      };
+    }
   } catch (_) {}
   localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultState));
   return defaultState;
@@ -50,6 +61,14 @@ function loadState() {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function isHabitActiveOn(habit, date) {
+  return !habit.createdAt || habit.createdAt <= dateKey(date);
+}
+
+function getActiveHabits(date) {
+  return state.habits.filter(habit => isHabitActiveOn(habit, date));
 }
 
 function isChecked(habitId, date = selectedDate) {
@@ -64,6 +83,24 @@ function toggleHabit(habitId, date = selectedDate) {
   if (!state.checks[key].length) delete state.checks[key];
   saveState();
   renderAll();
+  navigator.vibrate?.(20);
+}
+
+function getTasks(date = selectedDate) {
+  return state.tasks[dateKey(date)] || [];
+}
+
+function saveTasks(date, tasks) {
+  const key = dateKey(date);
+  if (tasks.length) state.tasks[key] = tasks;
+  else delete state.tasks[key];
+  saveState();
+}
+
+function toggleTask(taskId) {
+  const tasks = getTasks().map(task => task.id === taskId ? { ...task, done: !task.done } : task);
+  saveTasks(selectedDate, tasks);
+  renderToday();
   navigator.vibrate?.(20);
 }
 
@@ -122,14 +159,15 @@ function renderDateStrip() {
 function renderToday() {
   renderDateStrip();
   const checks = state.checks[dateKey(selectedDate)] || [];
-  const done = state.habits.filter(habit => checks.includes(habit.id)).length;
-  const percent = state.habits.length ? Math.round(done / state.habits.length * 100) : 0;
+  const activeHabits = getActiveHabits(selectedDate);
+  const done = activeHabits.filter(habit => checks.includes(habit.id)).length;
+  const percent = activeHabits.length ? Math.round(done / activeHabits.length * 100) : 0;
   const today = dateKey(selectedDate) === dateKey(new Date());
   $("#selectedDateTitle").textContent = today ? "Сегодня" : `${selectedDate.getDate()} ${MONTHS_GENITIVE[selectedDate.getMonth()]}`;
-  $("#summaryText").textContent = `${done} из ${state.habits.length}`;
+  $("#summaryText").textContent = `${done} из ${activeHabits.length}`;
   $("#progressPercent").textContent = `${percent}%`;
   $("#progressRing").style.setProperty("--progress", `${percent * 3.6}deg`);
-  $("#habitList").innerHTML = state.habits.length ? state.habits.map(habit => {
+  $("#habitList").innerHTML = activeHabits.length ? activeHabits.map(habit => {
     const doneToday = checks.includes(habit.id);
     const monthCount = getMonthCount(habit.id, selectedDate);
     const goalPercent = Math.min(100, Math.round(monthCount / habit.goal * 100));
@@ -138,8 +176,35 @@ function renderToday() {
       <div><h3>${escapeHtml(habit.name)}</h3><div class="habit-meta"><span>Серия ${getStreak(habit.id, selectedDate)} дн.</span><span>${monthCount}/${habit.goal} в месяце</span></div></div>
       <span class="mini-progress">${goalPercent}%</span>
     </article>`;
-  }).join("") : `<div class="empty-state">Добавьте первую привычку кнопкой «+»</div>`;
+  }).join("") : `<div class="empty-state">${state.habits.length ? "На эту дату активных привычек ещё нет" : "Добавьте первую привычку кнопкой «+»"}</div>`;
   $$("[data-toggle]").forEach(button => button.addEventListener("click", () => toggleHabit(button.dataset.toggle)));
+  renderTasks();
+  renderNote();
+}
+
+function renderTasks() {
+  const tasks = getTasks();
+  $("#taskList").innerHTML = tasks.length ? tasks.map(task => `
+    <article class="task-card ${task.done ? "done" : ""}">
+      <button class="task-check" data-task-toggle="${task.id}" aria-label="${task.done ? "Вернуть" : "Выполнить"} ${escapeHtml(task.name)}">✓</button>
+      <div class="task-content">
+        <strong class="task-name">${escapeHtml(task.name)}</strong>
+        ${task.reminderEnabled ? `<span class="task-reminder">Напоминание в ${escapeHtml(task.reminderTime || "09:00")}</span>` : ""}
+      </div>
+      <button class="task-edit" data-task-edit="${task.id}" aria-label="Изменить ${escapeHtml(task.name)}">•••</button>
+    </article>
+  `).join("") : `<div class="empty-state compact">На этот день важных дел нет</div>`;
+  $$("[data-task-toggle]").forEach(button => button.addEventListener("click", () => toggleTask(button.dataset.taskToggle)));
+  $$("[data-task-edit]").forEach(button => button.addEventListener("click", () => openTaskDialog(button.dataset.taskEdit)));
+}
+
+function renderNote() {
+  const key = dateKey(selectedDate);
+  if ($("#dayNote").dataset.date !== key) {
+    $("#dayNote").value = state.notes[key] || "";
+    $("#dayNote").dataset.date = key;
+    $("#noteSaveStatus").textContent = "";
+  }
 }
 
 function renderCalendar() {
@@ -153,8 +218,9 @@ function renderCalendar() {
   $("#calendarGrid").innerHTML = Array.from({ length: 42 }, (_, index) => {
     const date = addDays(gridStart, index);
     const key = dateKey(date);
-    const done = state.checks[key]?.filter(id => state.habits.some(h => h.id === id)).length || 0;
-    const progress = state.habits.length ? done / state.habits.length * 100 : 0;
+    const activeHabits = getActiveHabits(date);
+    const done = state.checks[key]?.filter(id => activeHabits.some(h => h.id === id)).length || 0;
+    const progress = activeHabits.length ? done / activeHabits.length * 100 : 0;
     return `<button class="calendar-day ${date.getMonth() !== month ? "outside" : ""} ${key === todayKey ? "today" : ""} ${key === dateKey(selectedDate) ? "selected" : ""}" data-calendar-date="${key}">
       ${date.getDate()}<span class="day-progress"><i style="width:${progress}%"></i></span>
     </button>`;
@@ -162,6 +228,7 @@ function renderCalendar() {
   $$("[data-calendar-date]").forEach(button => button.addEventListener("click", () => {
     selectedDate = new Date(`${button.dataset.calendarDate}T00:00:00`);
     calendarDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+    renderToday();
     switchScreen("today");
   }));
 
@@ -169,9 +236,11 @@ function renderCalendar() {
   let done = 0;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   for (let day = 1; day <= daysInMonth; day++) {
-    const key = dateKey(new Date(year, month, day));
-    possible += state.habits.length;
-    done += state.checks[key]?.filter(id => state.habits.some(h => h.id === id)).length || 0;
+    const date = new Date(year, month, day);
+    const key = dateKey(date);
+    const activeHabits = getActiveHabits(date);
+    possible += activeHabits.length;
+    done += state.checks[key]?.filter(id => activeHabits.some(h => h.id === id)).length || 0;
   }
   $("#monthPercent").textContent = `${possible ? Math.round(done / possible * 100) : 0}%`;
   $("#monthDone").textContent = done;
@@ -180,23 +249,31 @@ function renderCalendar() {
 
 function renderManage() {
   $("#manageList").innerHTML = state.habits.length ? state.habits.map(habit =>
-    `<button class="manage-card" data-edit="${habit.id}" style="--habit-color:${habit.color}">
-      <span class="color-mark"></span>
-      <div><h3>${escapeHtml(habit.name)}</h3><span class="muted">Цель: ${habit.goal} дней в месяц</span></div>
-      <span class="edit-mark">›</span>
-    </button>`
+    `<article class="manage-card" style="--habit-color:${habit.color}">
+      <button class="manage-card-main" data-edit="${habit.id}" aria-label="Изменить ${escapeHtml(habit.name)}">
+        <span class="color-mark"></span>
+        <div><h3>${escapeHtml(habit.name)}</h3><span class="muted">Цель: ${habit.goal} дней${habit.reminderEnabled ? ` · напомнить в ${escapeHtml(habit.reminderTime || "20:00")}` : ""}</span></div>
+        <span class="edit-mark">›</span>
+      </button>
+      <button class="inline-delete" data-delete-habit="${habit.id}" aria-label="Удалить ${escapeHtml(habit.name)}">×</button>
+    </article>`
   ).join("") : `<div class="empty-state">Список пока пуст</div>`;
   $$("[data-edit]").forEach(button => button.addEventListener("click", () => openHabitDialog(button.dataset.edit)));
+  $$("[data-delete-habit]").forEach(button => button.addEventListener("click", () => deleteHabit(button.dataset.deleteHabit)));
 }
 
 function renderStats() {
   const totalDone = Object.values(state.checks).reduce((sum, ids) => sum + ids.filter(id => state.habits.some(h => h.id === id)).length, 0);
-  const firstDate = Object.keys(state.checks).sort()[0];
-  const trackedDays = firstDate ? Math.max(1, Math.floor((startOfDay(new Date()) - new Date(`${firstDate}T00:00:00`)) / 86400000) + 1) : 1;
-  const possible = trackedDays * state.habits.length;
+  const today = startOfDay(new Date());
+  const possible = state.habits.reduce((sum, habit) => {
+    const created = habit.createdAt ? new Date(`${habit.createdAt}T00:00:00`) : today;
+    return sum + Math.max(1, Math.floor((today - created) / 86400000) + 1);
+  }, 0);
   $("#overallPercent").textContent = `${possible ? Math.min(100, Math.round(totalDone / possible * 100)) : 0}%`;
   $("#statsList").innerHTML = state.habits.length ? state.habits.map(habit => {
     const count = Object.values(state.checks).filter(ids => ids.includes(habit.id)).length;
+    const created = habit.createdAt ? new Date(`${habit.createdAt}T00:00:00`) : today;
+    const trackedDays = Math.max(1, Math.floor((today - created) / 86400000) + 1);
     const percent = Math.min(100, Math.round(count / trackedDays * 100));
     return `<article class="stat-card" style="--habit-color:${habit.color}">
       <div class="stat-top"><strong>${escapeHtml(habit.name)}</strong><strong>${percent}%</strong></div>
@@ -230,11 +307,42 @@ function openHabitDialog(id = null) {
   $("#dialogTitle").textContent = habit ? "Изменить привычку" : "Добавить привычку";
   $("#habitName").value = habit?.name || "";
   $("#habitGoal").value = habit?.goal || 20;
+  $("#habitReminderEnabled").checked = Boolean(habit?.reminderEnabled);
+  $("#habitReminderTime").value = habit?.reminderTime || "20:00";
+  $("#habitReminderTimeRow").classList.toggle("hidden", !habit?.reminderEnabled);
   selectedColor = habit?.color || COLORS[0];
   $("#deleteHabitButton").classList.toggle("hidden", !habit);
   renderColors();
   $("#habitDialog").showModal();
   setTimeout(() => $("#habitName").focus(), 100);
+}
+
+function openTaskDialog(id = null) {
+  editingTaskId = id;
+  const task = getTasks().find(item => item.id === id);
+  $("#taskDialogEyebrow").textContent = task ? "РЕДАКТИРОВАНИЕ" : "ВАЖНОЕ ДЕЛО";
+  $("#taskDialogTitle").textContent = task ? "Изменить дело" : "Добавить дело";
+  $("#taskName").value = task?.name || "";
+  $("#taskReminderEnabled").checked = Boolean(task?.reminderEnabled);
+  $("#taskReminderTime").value = task?.reminderTime || "09:00";
+  $("#taskReminderTimeRow").classList.toggle("hidden", !task?.reminderEnabled);
+  $("#deleteTaskButton").classList.toggle("hidden", !task);
+  $("#taskDialog").showModal();
+  setTimeout(() => $("#taskName").focus(), 100);
+}
+
+function deleteHabit(id) {
+  const habit = state.habits.find(item => item.id === id);
+  if (!habit || !confirm(`Удалить привычку «${habit.name}» и все её отметки?`)) return;
+  state.habits = state.habits.filter(item => item.id !== id);
+  for (const key of Object.keys(state.checks)) {
+    state.checks[key] = state.checks[key].filter(itemId => itemId !== id);
+    if (!state.checks[key].length) delete state.checks[key];
+  }
+  saveState();
+  if ($("#habitDialog").open) $("#habitDialog").close();
+  renderAll();
+  showToast("Привычка удалена");
 }
 
 function switchScreen(screen) {
@@ -252,22 +360,133 @@ function showToast(text) {
   showToast.timer = setTimeout(() => toast.classList.remove("show"), 2200);
 }
 
+async function requestNotificationPermission() {
+  if (!("Notification" in window)) {
+    showToast("Уведомления не поддерживаются этим браузером");
+    return false;
+  }
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") {
+    showToast("Разрешите уведомления в настройках браузера");
+    return false;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") showToast("Уведомления не разрешены");
+  return permission === "granted";
+}
+
+async function showReminder(title, body, tag) {
+  if (Notification.permission !== "granted") return;
+  const registration = await navigator.serviceWorker?.ready;
+  if (registration) {
+    registration.showNotification(title, { body, tag, icon: "icon.svg", badge: "icon.svg" });
+  } else {
+    new Notification(title, { body, tag, icon: "icon.svg" });
+  }
+}
+
+function checkReminders() {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const now = new Date();
+  const key = dateKey(now);
+  const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  let changed = false;
+
+  getActiveHabits(now).forEach(habit => {
+    const reminderKey = `${key}:habit:${habit.id}:${habit.reminderTime}`;
+    if (habit.reminderEnabled && habit.reminderTime === currentTime && !isCheckedAt(habit.id, now) && !state.notified[reminderKey]) {
+      showReminder("Пора вернуться в ритм", habit.name, reminderKey);
+      state.notified[reminderKey] = true;
+      changed = true;
+    }
+  });
+
+  (state.tasks[key] || []).forEach(task => {
+    const reminderKey = `${key}:task:${task.id}:${task.reminderTime}`;
+    if (task.reminderEnabled && task.reminderTime === currentTime && !task.done && !state.notified[reminderKey]) {
+      showReminder("Важное дело", task.name, reminderKey);
+      state.notified[reminderKey] = true;
+      changed = true;
+    }
+  });
+
+  if (changed) saveState();
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]);
 }
 
+function isValidBackup(value) {
+  return Boolean(value && Array.isArray(value.habits) && value.checks && typeof value.checks === "object" &&
+    value.habits.every(habit => typeof habit.id === "string" && typeof habit.name === "string" &&
+      Number.isFinite(Number(habit.goal)) && typeof habit.color === "string") &&
+    Object.values(value.checks).every(ids => Array.isArray(ids) && ids.every(id => typeof id === "string")));
+}
+
+function exportData() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `ritm-backup-${dateKey(new Date())}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+  showToast("Резервная копия создана");
+}
+
+async function importData(file) {
+  try {
+    const backup = JSON.parse(await file.text());
+    if (!isValidBackup(backup)) throw new Error("invalid backup");
+    state = {
+      habits: backup.habits.map(habit => ({
+        ...habit,
+        goal: Math.max(1, Math.min(31, Number(habit.goal))),
+        createdAt: habit.createdAt || dateKey(new Date())
+      })),
+      checks: backup.checks,
+      tasks: backup.tasks && typeof backup.tasks === "object" ? backup.tasks : {},
+      notes: backup.notes && typeof backup.notes === "object" ? backup.notes : {},
+      notified: {}
+    };
+    saveState();
+    renderAll();
+    showToast("Данные восстановлены");
+  } catch (_) {
+    showToast("Не удалось прочитать резервную копию");
+  }
+}
+
 $("#addHabitButton").addEventListener("click", () => openHabitDialog());
+$("#addTaskButton").addEventListener("click", () => openTaskDialog());
+$("#habitReminderEnabled").addEventListener("change", event => {
+  $("#habitReminderTimeRow").classList.toggle("hidden", !event.target.checked);
+  if (event.target.checked) requestNotificationPermission();
+});
+$("#taskReminderEnabled").addEventListener("change", event => {
+  $("#taskReminderTimeRow").classList.toggle("hidden", !event.target.checked);
+  if (event.target.checked) requestNotificationPermission();
+});
+$("#exportDataButton").addEventListener("click", exportData);
+$("#importDataButton").addEventListener("click", () => $("#importDataInput").click());
+$("#importDataInput").addEventListener("change", event => {
+  const [file] = event.target.files;
+  if (file && confirm("Заменить текущие привычки и отметки данными из резервной копии?")) importData(file);
+  event.target.value = "";
+});
 $("#habitForm").addEventListener("submit", event => {
   event.preventDefault();
   const name = $("#habitName").value.trim();
   const goal = Math.max(1, Math.min(31, Number($("#habitGoal").value)));
+  const reminderEnabled = $("#habitReminderEnabled").checked;
+  const reminderTime = $("#habitReminderTime").value || "20:00";
   if (!name) return;
   if (editingHabitId) {
     const habit = state.habits.find(item => item.id === editingHabitId);
-    Object.assign(habit, { name, goal, color: selectedColor });
+    Object.assign(habit, { name, goal, color: selectedColor, reminderEnabled, reminderTime });
     showToast("Привычка изменена для всех дат");
   } else {
-    state.habits.push({ id: crypto.randomUUID(), name, goal, color: selectedColor, createdAt: dateKey(new Date()) });
+    state.habits.push({ id: crypto.randomUUID(), name, goal, color: selectedColor, createdAt: dateKey(new Date()), reminderEnabled, reminderTime });
     showToast("Привычка добавлена");
   }
   saveState();
@@ -276,16 +495,49 @@ $("#habitForm").addEventListener("submit", event => {
 });
 
 $("#deleteHabitButton").addEventListener("click", () => {
-  if (!editingHabitId || !confirm("Удалить привычку и все её отметки?")) return;
-  state.habits = state.habits.filter(habit => habit.id !== editingHabitId);
-  for (const key of Object.keys(state.checks)) {
-    state.checks[key] = state.checks[key].filter(id => id !== editingHabitId);
-    if (!state.checks[key].length) delete state.checks[key];
+  if (editingHabitId) deleteHabit(editingHabitId);
+});
+
+$("#taskForm").addEventListener("submit", event => {
+  event.preventDefault();
+  const name = $("#taskName").value.trim();
+  if (!name) return;
+  const reminderEnabled = $("#taskReminderEnabled").checked;
+  const reminderTime = $("#taskReminderTime").value || "09:00";
+  const tasks = getTasks();
+  if (editingTaskId) {
+    const task = tasks.find(item => item.id === editingTaskId);
+    Object.assign(task, { name, reminderEnabled, reminderTime });
+    showToast("Дело изменено");
+  } else {
+    tasks.push({ id: crypto.randomUUID(), name, done: false, reminderEnabled, reminderTime });
+    showToast("Дело добавлено");
   }
-  saveState();
-  $("#habitDialog").close();
-  renderAll();
-  showToast("Привычка удалена");
+  saveTasks(selectedDate, tasks);
+  $("#taskDialog").close();
+  renderToday();
+});
+
+$("#deleteTaskButton").addEventListener("click", () => {
+  const task = getTasks().find(item => item.id === editingTaskId);
+  if (!task || !confirm(`Удалить дело «${task.name}»?`)) return;
+  saveTasks(selectedDate, getTasks().filter(item => item.id !== editingTaskId));
+  $("#taskDialog").close();
+  renderToday();
+  showToast("Дело удалено");
+});
+
+$("#dayNote").addEventListener("input", event => {
+  const key = event.target.dataset.date || dateKey(selectedDate);
+  const text = event.target.value;
+  clearTimeout($("#dayNote").saveTimer);
+  $("#noteSaveStatus").textContent = "Сохранение...";
+  $("#dayNote").saveTimer = setTimeout(() => {
+    if (text.trim()) state.notes[key] = text;
+    else delete state.notes[key];
+    saveState();
+    $("#noteSaveStatus").textContent = "Сохранено";
+  }, 350);
 });
 
 $$(".nav-item").forEach(button => button.addEventListener("click", () => switchScreen(button.dataset.screen)));
@@ -321,3 +573,9 @@ $("#applyMonth").addEventListener("click", event => {
 
 renderAll();
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js"));
+setInterval(checkReminders, 30000);
+window.addEventListener("focus", checkReminders);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") checkReminders();
+});
+checkReminders();

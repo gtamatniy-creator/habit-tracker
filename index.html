@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=6">
 </head>
 <body>
   <div class="app-shell">
@@ -37,6 +37,20 @@
           <button class="text-button" id="jumpTodayButton">К сегодня</button>
         </div>
         <div class="habit-list" id="habitList"></div>
+
+        <div class="section-heading">
+          <h2>Важные дела</h2>
+          <button class="text-button" id="addTaskButton">+ Добавить</button>
+        </div>
+        <div class="task-list" id="taskList"></div>
+
+        <div class="section-heading">
+          <h2>Заметка дня</h2>
+          <span class="save-status" id="noteSaveStatus"></span>
+        </div>
+        <article class="note-widget">
+          <textarea id="dayNote" maxlength="2000" placeholder="Мысли, планы, важная информация..."></textarea>
+        </article>
       </section>
 
       <section class="screen" id="calendarScreen">
@@ -70,6 +84,17 @@
           </div>
         </div>
         <div class="manage-list" id="manageList"></div>
+        <article class="data-card">
+          <div>
+            <h3>Данные</h3>
+            <p class="muted">Резервная копия хранит привычки и все отметки</p>
+          </div>
+          <div class="data-actions">
+            <button class="secondary-button" type="button" id="exportDataButton">Экспорт</button>
+            <button class="secondary-button" type="button" id="importDataButton">Импорт</button>
+            <input class="visually-hidden" id="importDataInput" type="file" accept="application/json,.json">
+          </div>
+        </article>
       </section>
 
       <section class="screen" id="statsScreen">
@@ -116,12 +141,48 @@
         Цель на месяц
         <div class="goal-input"><input id="habitGoal" type="number" min="1" max="31" value="20" required><span>дней</span></div>
       </label>
+      <label class="switch-row">
+        <span><strong>Напоминать</strong><small>Только для этой привычки</small></span>
+        <input id="habitReminderEnabled" type="checkbox">
+      </label>
+      <label class="reminder-time hidden" id="habitReminderTimeRow">
+        Время напоминания
+        <input id="habitReminderTime" type="time" value="20:00">
+      </label>
       <fieldset>
         <legend>Цвет</legend>
         <div class="color-options" id="colorOptions"></div>
       </fieldset>
       <div class="dialog-actions">
         <button class="danger-button hidden" type="button" id="deleteHabitButton">Удалить</button>
+        <button class="primary-button" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="taskDialog">
+    <form method="dialog" id="taskForm">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow" id="taskDialogEyebrow">ВАЖНОЕ ДЕЛО</p>
+          <h2 id="taskDialogTitle">Добавить дело</h2>
+        </div>
+        <button class="close-button" value="cancel" aria-label="Закрыть">×</button>
+      </div>
+      <label>
+        Что нужно сделать
+        <input id="taskName" maxlength="100" placeholder="Например, позвонить врачу" required>
+      </label>
+      <label class="switch-row">
+        <span><strong>Напомнить</strong><small>Уведомление для этого дела</small></span>
+        <input id="taskReminderEnabled" type="checkbox">
+      </label>
+      <label class="reminder-time hidden" id="taskReminderTimeRow">
+        Время напоминания
+        <input id="taskReminderTime" type="time" value="09:00">
+      </label>
+      <div class="dialog-actions">
+        <button class="danger-button hidden" type="button" id="deleteTaskButton">Удалить</button>
         <button class="primary-button" type="submit">Сохранить</button>
       </div>
     </form>
@@ -140,6 +201,6 @@
   </dialog>
 
   <div class="toast" id="toast"></div>
-  <script src="app.js"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
