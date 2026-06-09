@@ -159,7 +159,13 @@ function renderDateStrip() {
 function renderToday() {
   renderDateStrip();
   const checks = state.checks[dateKey(selectedDate)] || [];
-  const activeHabits = getActiveHabits(selectedDate);
+  const activeHabits = getActiveHabits(selectedDate).sort((a, b) => {
+  const aDone = checks.includes(a.id);
+  const bDone = checks.includes(b.id);
+
+  if (aDone === bDone) return 0;
+  return aDone ? 1 : -1;
+});
   const done = activeHabits.filter(habit => checks.includes(habit.id)).length;
   const percent = activeHabits.length ? Math.round(done / activeHabits.length * 100) : 0;
   const today = dateKey(selectedDate) === dateKey(new Date());
@@ -183,7 +189,10 @@ function renderToday() {
 }
 
 function renderTasks() {
-  const tasks = getTasks();
+  const tasks = getTasks().sort((a, b) => {
+  if (a.done === b.done) return 0;
+  return a.done ? 1 : -1;
+});
   $("#taskList").innerHTML = tasks.length ? tasks.map(task => `
     <article class="task-card ${task.done ? "done" : ""}">
       <button class="task-check" data-task-toggle="${task.id}" aria-label="${task.done ? "Вернуть" : "Выполнить"} ${escapeHtml(task.name)}">✓</button>
