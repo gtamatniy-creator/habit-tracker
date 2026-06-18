@@ -13,7 +13,8 @@ const defaultState = {
   checks: {},
   tasks: {},
   notes: {},
-  notified: {}
+  notified: {},
+hideCompletedHabits: false
 };
 
 let state = loadState();
@@ -51,7 +52,8 @@ function loadState() {
         ...saved,
         tasks: saved.tasks || {},
         notes: saved.notes || {},
-        notified: saved.notified || {}
+        notified: saved.notified || {},
+hideCompletedHabits: saved.hideCompletedHabits || false
       };
     }
   } catch (_) {}
@@ -159,13 +161,17 @@ function renderDateStrip() {
 function renderToday() {
   renderDateStrip();
   const checks = state.checks[dateKey(selectedDate)] || [];
-  const activeHabits = getActiveHabits(selectedDate).sort((a, b) => {
+  let activeHabits = getActiveHabits(selectedDate).sort((a, b) => {
   const aDone = checks.includes(a.id);
   const bDone = checks.includes(b.id);
 
   if (aDone === bDone) return 0;
   return aDone ? 1 : -1;
 });
+
+if (state.hideCompletedHabits) {
+  activeHabits = activeHabits.filter(habit => !checks.includes(habit.id));
+}
   const done = activeHabits.filter(habit => checks.includes(habit.id)).length;
   const percent = activeHabits.length ? Math.round(done / activeHabits.length * 100) : 0;
   const today = dateKey(selectedDate) === dateKey(new Date());
@@ -579,9 +585,20 @@ $("#applyMonth").addEventListener("click", event => {
   $("#monthDialog").close();
   renderCalendar();
 });
+$("#hideCompletedHabits").checked = state.hideCompletedHabits;
+
+$("#hideCompletedHabits").addEventListener("change", event => {
+  state.hideCompletedHabits = event.target.checked;
+  saveState();
+  renderToday();
+});
 
 renderAll();
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("service-worker.js"));
+
+if ("serviceWorker" in navigator)
+  window.addEventListener("load", () =>
+    navigator.serviceWorker.register("service-worker.js"));
+
 setInterval(checkReminders, 30000);
 window.addEventListener("focus", checkReminders);
 document.addEventListener("visibilitychange", () => {
