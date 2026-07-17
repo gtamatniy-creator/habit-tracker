@@ -1,4 +1,4 @@
-const STORAGE_KEY = "ritm-habit-tracker-v1";
+﻿const STORAGE_KEY = "ritm-habit-tracker-v1";
 const COLORS = ["#70e1a1", "#7db5ff", "#ffb45f", "#d18cff", "#ff7f8f", "#65dce0"];
 const MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
 const MONTHS_GENITIVE = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
@@ -14,7 +14,7 @@ const defaultState = {
   tasks: {},
   notes: {},
   notified: {},
-hideCompletedHabits: false
+  hideCompletedHabits: false
 };
 
 let state = loadState();
@@ -23,6 +23,8 @@ let calendarDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(),
 let editingHabitId = null;
 let editingTaskId = null;
 let selectedColor = COLORS[0];
+let editingScheduleMonth = null;
+let selectedScheduleDays = new Set();
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -47,30 +49,103 @@ function addDays(date, amount) {
 function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (saved?.habits && saved?.checks) {
-      return {
-        ...saved,
-        tasks: saved.tasks || {},
-        notes: saved.notes || {},
-        notified: saved.notified || {},
-hideCompletedHabits: saved.hideCompletedHabits || false
-      };
-    }
+    if (saved?.habits && saved?.checks) return migrateState(saved);
   } catch (_) {}
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultState));
-  return defaultState;
+  const migrated = migrateState(defaultState);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+  return migrated;
+}
+
+function migrateState(saved) {
+  return {
+    ...saved,
+    habits: (saved.habits || []).map(habit => ({
+      ...habit,
+      schedules: habit.schedules && typeof habit.schedules === "object" ? habit.schedules : {}
+    })),
+    checks: saved.checks || {},
+    tasks: saved.tasks || {},
+    notes: saved.notes || {},
+    notified: saved.notified || {},
+    hideCompletedHabits: Boolean(saved.hideCompletedHabits)
+  };
 }
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function isHabitActiveOn(habit, date) {
+function monthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function daysInMonth(date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+function allDaysForMonth(date) {
+  return Array.from({ length: daysInMonth(date) }, (_, index) => index + 1);
+}
+
+function isHabitCreatedOn(habit, date) {
   return !habit.createdAt || habit.createdAt <= dateKey(date);
 }
 
-function getActiveHabits(date) {
-  return state.habits.filter(habit => isHabitActiveOn(habit, date));
+function previousMonth(date) {
+  return new Date(date.getFullYear(), date.getMonth() - 1, 1);
+}
+
+function normalizeSchedule(habit, date, persist = true) {
+  habit.schedules ||= {};
+  const key = monthKey(date);
+  const max = daysInMonth(date);
+  if (Array.isArray(habit.schedules[key])) {
+    const clean = [...new Set(habit.schedules[key].map(Number).filter(day => day >= 1 && day <= max))].sort((a, b) => a - b);
+    habit.schedules[key] = clean;
+    return clean;
+  }
+  const prevDate = previousMonth(date);
+  const prevKey = monthKey(prevDate);
+  let days;
+  if (Array.isArray(habit.schedules[prevKey])) {
+    const selectedWeekdays = new Set(habit.schedules[prevKey].map(day => new Date(prevDate.getFullYear(), prevDate.getMonth(), day).getDay()));
+    days = allDaysForMonth(date).filter(day => selectedWeekdays.has(new Date(date.getFullYear(), date.getMonth(), day).getDay()));
+  } else {
+    days = allDaysForMonth(date);
+  }
+  if (persist) habit.schedules[key] = days;
+  return days;
+}
+
+function ensureMonthSchedule(habit, date) {
+  const days = normalizeSchedule(habit, date, true);
+  saveState();
+  return days;
+}
+
+function isHabitScheduledOn(habit, date, persist = false) {
+  return isHabitCreatedOn(habit, date) && normalizeSchedule(habit, date, persist).includes(date.getDate());
+}
+
+function getScheduledHabits(date, persist = false) {
+  return state.habits.filter(habit => isHabitScheduledOn(habit, date, persist));
+}
+
+function getPlannedDatesInMonth(habit, date, throughDay = daysInMonth(date), persist = false) {
+  return normalizeSchedule(habit, date, persist)
+    .filter(day => day <= throughDay)
+    .map(day => new Date(date.getFullYear(), date.getMonth(), day))
+    .filter(dayDate => isHabitCreatedOn(habit, dayDate));
+}
+
+function getPreviousPlannedDate(habit, date) {
+  let cursor = addDays(startOfDay(date), -1);
+  for (let guard = 0; guard < 3700; guard++) {
+    if (isHabitCreatedOn(habit, cursor) && isHabitScheduledOn(habit, cursor)) return cursor;
+    if (habit.createdAt && dateKey(cursor) < habit.createdAt) return null;
+    cursor = addDays(cursor, -1);
+  }
+  return null;
 }
 
 function isChecked(habitId, date = selectedDate) {
@@ -106,32 +181,42 @@ function toggleTask(taskId) {
   navigator.vibrate?.(20);
 }
 
-function getMonthCount(habitId, date) {
-  const prefix = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-  return Object.entries(state.checks).reduce((sum, [key, ids]) => sum + (key.startsWith(prefix) && ids.includes(habitId) ? 1 : 0), 0);
+function getHabitMonthStats(habit, date, throughDay = daysInMonth(date), persist = false) {
+  const plannedDates = getPlannedDatesInMonth(habit, date, throughDay, persist);
+  const done = plannedDates.filter(dayDate => isCheckedAt(habit.id, dayDate)).length;
+  return { done, planned: plannedDates.length, percent: plannedDates.length ? Math.round(done / plannedDates.length * 100) : 0 };
 }
 
 function getStreak(habitId, fromDate = new Date()) {
-  let streak = 0;
+  const habit = state.habits.find(item => item.id === habitId);
+  if (!habit) return 0;
   let cursor = startOfDay(fromDate);
-  if (!isCheckedAt(habitId, cursor)) cursor = addDays(cursor, -1);
-  while (isCheckedAt(habitId, cursor)) {
+  if (!isHabitScheduledOn(habit, cursor) || !isCheckedAt(habitId, cursor)) cursor = getPreviousPlannedDate(habit, cursor);
+  let streak = 0;
+  while (cursor && isCheckedAt(habitId, cursor)) {
     streak += 1;
-    cursor = addDays(cursor, -1);
+    cursor = getPreviousPlannedDate(habit, cursor);
   }
   return streak;
 }
 
 function getBestStreak(habitId) {
-  const dates = Object.keys(state.checks).filter(key => state.checks[key].includes(habitId)).sort();
+  const habit = state.habits.find(item => item.id === habitId);
+  if (!habit) return 0;
+  const today = startOfDay(new Date());
+  let cursor = habit.createdAt ? new Date(`${habit.createdAt}T00:00:00`) : today;
   let best = 0;
   let current = 0;
-  let previous = null;
-  for (const key of dates) {
-    const date = new Date(`${key}T00:00:00`);
-    current = previous && Math.round((date - previous) / 86400000) === 1 ? current + 1 : 1;
-    best = Math.max(best, current);
-    previous = date;
+  while (cursor <= today) {
+    if (isHabitScheduledOn(habit, cursor)) {
+      if (isCheckedAt(habitId, cursor)) {
+        current += 1;
+        best = Math.max(best, current);
+      } else {
+        current = 0;
+      }
+    }
+    cursor = addDays(cursor, 1);
   }
   return best;
 }
@@ -160,35 +245,31 @@ function renderDateStrip() {
 
 function renderToday() {
   renderDateStrip();
+  state.habits.forEach(habit => ensureMonthSchedule(habit, selectedDate));
   const checks = state.checks[dateKey(selectedDate)] || [];
-  let activeHabits = getActiveHabits(selectedDate).sort((a, b) => {
-  const aDone = checks.includes(a.id);
-  const bDone = checks.includes(b.id);
-
-  if (aDone === bDone) return 0;
-  return aDone ? 1 : -1;
-});
-
-if (state.hideCompletedHabits) {
-  activeHabits = activeHabits.filter(habit => !checks.includes(habit.id));
-}
-  const done = activeHabits.filter(habit => checks.includes(habit.id)).length;
-  const percent = activeHabits.length ? Math.round(done / activeHabits.length * 100) : 0;
+  const scheduledHabits = getScheduledHabits(selectedDate).sort((a, b) => {
+    const aDone = checks.includes(a.id);
+    const bDone = checks.includes(b.id);
+    if (aDone === bDone) return 0;
+    return aDone ? 1 : -1;
+  });
+  const done = scheduledHabits.filter(habit => checks.includes(habit.id)).length;
+  const percent = scheduledHabits.length ? Math.round(done / scheduledHabits.length * 100) : 0;
+  const visibleHabits = state.hideCompletedHabits ? scheduledHabits.filter(habit => !checks.includes(habit.id)) : scheduledHabits;
   const today = dateKey(selectedDate) === dateKey(new Date());
   $("#selectedDateTitle").textContent = today ? "Сегодня" : `${selectedDate.getDate()} ${MONTHS_GENITIVE[selectedDate.getMonth()]}`;
-  $("#summaryText").textContent = `${done} из ${activeHabits.length}`;
+  $("#summaryText").textContent = `${done} из ${scheduledHabits.length}`;
   $("#progressPercent").textContent = `${percent}%`;
   $("#progressRing").style.setProperty("--progress", `${percent * 3.6}deg`);
-  $("#habitList").innerHTML = activeHabits.length ? activeHabits.map(habit => {
+  $("#habitList").innerHTML = visibleHabits.length ? visibleHabits.map(habit => {
     const doneToday = checks.includes(habit.id);
-    const monthCount = getMonthCount(habit.id, selectedDate);
-    const goalPercent = Math.min(100, Math.round(monthCount / habit.goal * 100));
+    const monthStats = getHabitMonthStats(habit, selectedDate, selectedDate.getDate());
     return `<article class="habit-card ${doneToday ? "done" : ""}" style="--habit-color:${habit.color}">
       <button class="check-button" data-toggle="${habit.id}" aria-label="Отметить ${escapeHtml(habit.name)}">✓</button>
-      <div><h3>${escapeHtml(habit.name)}</h3><div class="habit-meta"><span>Серия ${getStreak(habit.id, selectedDate)} дн.</span><span>${monthCount}/${habit.goal} в месяце</span></div></div>
-      <span class="mini-progress">${goalPercent}%</span>
+      <div><h3>${escapeHtml(habit.name)}</h3><div class="habit-meta"><span>Серия: ${getStreak(habit.id, selectedDate)} дней</span><span>${monthStats.done} / ${monthStats.planned} запланированных</span></div></div>
+      <span class="mini-progress">${monthStats.percent}%</span>
     </article>`;
-  }).join("") : `<div class="empty-state">${state.habits.length ? "На эту дату активных привычек ещё нет" : "Добавьте первую привычку кнопкой «+»"}</div>`;
+  }).join("") : `<div class="empty-state">${scheduledHabits.length ? "Все запланированные привычки выполнены" : (state.habits.length ? "На эту дату привычки не запланированы" : "Добавьте первую привычку кнопкой «+»")}</div>`;
   $$("[data-toggle]").forEach(button => button.addEventListener("click", () => toggleHabit(button.dataset.toggle)));
   renderTasks();
   renderNote();
@@ -227,15 +308,16 @@ function renderCalendar() {
   $("#calendarYear").textContent = calendarDate.getFullYear();
   const year = calendarDate.getFullYear();
   const month = calendarDate.getMonth();
+  state.habits.forEach(habit => ensureMonthSchedule(habit, calendarDate));
   const firstDayOffset = (new Date(year, month, 1).getDay() + 6) % 7;
   const gridStart = new Date(year, month, 1 - firstDayOffset);
   const todayKey = dateKey(new Date());
   $("#calendarGrid").innerHTML = Array.from({ length: 42 }, (_, index) => {
     const date = addDays(gridStart, index);
     const key = dateKey(date);
-    const activeHabits = getActiveHabits(date);
-    const done = state.checks[key]?.filter(id => activeHabits.some(h => h.id === id)).length || 0;
-    const progress = activeHabits.length ? done / activeHabits.length * 100 : 0;
+    const scheduledHabits = getScheduledHabits(date, date.getFullYear() === year && date.getMonth() === month);
+    const done = state.checks[key]?.filter(id => scheduledHabits.some(h => h.id === id)).length || 0;
+    const progress = scheduledHabits.length ? done / scheduledHabits.length * 100 : 0;
     return `<button class="calendar-day ${date.getMonth() !== month ? "outside" : ""} ${key === todayKey ? "today" : ""} ${key === dateKey(selectedDate) ? "selected" : ""}" data-calendar-date="${key}">
       ${date.getDate()}<span class="day-progress"><i style="width:${progress}%"></i></span>
     </button>`;
@@ -246,16 +328,15 @@ function renderCalendar() {
     renderToday();
     switchScreen("today");
   }));
-
   let possible = 0;
   let done = 0;
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  for (let day = 1; day <= daysInMonth; day++) {
+  const totalDays = daysInMonth(calendarDate);
+  for (let day = 1; day <= totalDays; day++) {
     const date = new Date(year, month, day);
     const key = dateKey(date);
-    const activeHabits = getActiveHabits(date);
-    possible += activeHabits.length;
-    done += state.checks[key]?.filter(id => activeHabits.some(h => h.id === id)).length || 0;
+    const scheduledHabits = getScheduledHabits(date);
+    possible += scheduledHabits.length;
+    done += state.checks[key]?.filter(id => scheduledHabits.some(h => h.id === id)).length || 0;
   }
   $("#monthPercent").textContent = `${possible ? Math.round(done / possible * 100) : 0}%`;
   $("#monthDone").textContent = done;
@@ -278,24 +359,32 @@ function renderManage() {
 }
 
 function renderStats() {
-  const totalDone = Object.values(state.checks).reduce((sum, ids) => sum + ids.filter(id => state.habits.some(h => h.id === id)).length, 0);
   const today = startOfDay(new Date());
-  const possible = state.habits.reduce((sum, habit) => {
-    const created = habit.createdAt ? new Date(`${habit.createdAt}T00:00:00`) : today;
-    return sum + Math.max(1, Math.floor((today - created) / 86400000) + 1);
-  }, 0);
-  $("#overallPercent").textContent = `${possible ? Math.min(100, Math.round(totalDone / possible * 100)) : 0}%`;
-  $("#statsList").innerHTML = state.habits.length ? state.habits.map(habit => {
-    const count = Object.values(state.checks).filter(ids => ids.includes(habit.id)).length;
-    const created = habit.createdAt ? new Date(`${habit.createdAt}T00:00:00`) : today;
-    const trackedDays = Math.max(1, Math.floor((today - created) / 86400000) + 1);
-    const percent = Math.min(100, Math.round(count / trackedDays * 100));
-    return `<article class="stat-card" style="--habit-color:${habit.color}">
+  let totalDone = 0;
+  let totalPlanned = 0;
+  const habitStats = state.habits.map(habit => {
+    let cursor = habit.createdAt ? new Date(`${habit.createdAt}T00:00:00`) : today;
+    let done = 0;
+    let planned = 0;
+    while (cursor <= today) {
+      if (isHabitScheduledOn(habit, cursor)) {
+        planned += 1;
+        if (isCheckedAt(habit.id, cursor)) done += 1;
+      }
+      cursor = addDays(cursor, 1);
+    }
+    totalDone += done;
+    totalPlanned += planned;
+    return { habit, done, planned, percent: planned ? Math.round(done / planned * 100) : 0 };
+  });
+  $("#overallPercent").textContent = `${totalPlanned ? Math.round(totalDone / totalPlanned * 100) : 0}%`;
+  $("#statsList").innerHTML = habitStats.length ? habitStats.map(({ habit, done, planned, percent }) => `
+    <article class="stat-card" style="--habit-color:${habit.color}">
       <div class="stat-top"><strong>${escapeHtml(habit.name)}</strong><strong>${percent}%</strong></div>
       <div class="bar"><i style="width:${percent}%"></i></div>
-      <div class="stat-footer"><span>${count} выполнений</span><span>лучшая серия: ${getBestStreak(habit.id)}</span></div>
-    </article>`;
-  }).join("") : `<div class="empty-state">Статистика появится после добавления привычек</div>`;
+      <div class="stat-footer"><span>${done} / ${planned} запланированных</span><span>лучшая серия: ${getBestStreak(habit.id)}</span></div>
+    </article>`
+  ).join("") : `<div class="empty-state">Статистика появится после добавления привычек</div>`;
 }
 
 function renderAll() {
@@ -315,6 +404,34 @@ function renderColors() {
   }));
 }
 
+function renderSchedulePicker() {
+  if (!editingScheduleMonth) editingScheduleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+  const year = editingScheduleMonth.getFullYear();
+  const month = editingScheduleMonth.getMonth();
+  $("#scheduleMonthTitle").textContent = `${MONTHS[month][0].toUpperCase()}${MONTHS[month].slice(1)} ${year}`;
+  const offset = (new Date(year, month, 1).getDay() + 6) % 7;
+  const blanks = Array.from({ length: offset }, () => `<span class="schedule-blank"></span>`).join("");
+  const days = allDaysForMonth(editingScheduleMonth).map(day => `<button type="button" class="schedule-day ${selectedScheduleDays.has(day) ? "selected" : ""}" data-schedule-day="${day}">${day}</button>`).join("");
+  $("#scheduleGrid").innerHTML = blanks + days;
+  $("#scheduleCount").textContent = `Выбрано дней: ${selectedScheduleDays.size}`;
+  $$("[data-schedule-day]").forEach(button => button.addEventListener("click", () => {
+    const day = Number(button.dataset.scheduleDay);
+    selectedScheduleDays.has(day) ? selectedScheduleDays.delete(day) : selectedScheduleDays.add(day);
+    renderSchedulePicker();
+  }));
+}
+
+function setScheduleDays(days) {
+  selectedScheduleDays = new Set(days);
+  renderSchedulePicker();
+}
+
+function scheduleForFormHabit(habit) {
+  const draft = habit || { schedules: {} };
+  const days = normalizeSchedule(draft, editingScheduleMonth, Boolean(habit));
+  return new Set(days);
+}
+
 function openHabitDialog(id = null) {
   editingHabitId = id;
   const habit = state.habits.find(item => item.id === id);
@@ -325,6 +442,9 @@ function openHabitDialog(id = null) {
   $("#habitReminderEnabled").checked = Boolean(habit?.reminderEnabled);
   $("#habitReminderTime").value = habit?.reminderTime || "20:00";
   $("#habitReminderTimeRow").classList.toggle("hidden", !habit?.reminderEnabled);
+  editingScheduleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+  selectedScheduleDays = scheduleForFormHabit(habit);
+  renderSchedulePicker();
   selectedColor = habit?.color || COLORS[0];
   $("#deleteHabitButton").classList.toggle("hidden", !habit);
   renderColors();
@@ -407,7 +527,7 @@ function checkReminders() {
   const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   let changed = false;
 
-  getActiveHabits(now).forEach(habit => {
+  getScheduledHabits(now).forEach(habit => {
     const reminderKey = `${key}:habit:${habit.id}:${habit.reminderTime}`;
     if (habit.reminderEnabled && habit.reminderTime === currentTime && !isCheckedAt(habit.id, now) && !state.notified[reminderKey]) {
       showReminder("Пора вернуться в ритм", habit.name, reminderKey);
@@ -435,7 +555,8 @@ function escapeHtml(value) {
 function isValidBackup(value) {
   return Boolean(value && Array.isArray(value.habits) && value.checks && typeof value.checks === "object" &&
     value.habits.every(habit => typeof habit.id === "string" && typeof habit.name === "string" &&
-      Number.isFinite(Number(habit.goal)) && typeof habit.color === "string") &&
+      Number.isFinite(Number(habit.goal)) && typeof habit.color === "string" &&
+      (!habit.schedules || typeof habit.schedules === "object")) &&
     Object.values(value.checks).every(ids => Array.isArray(ids) && ids.every(id => typeof id === "string")));
 }
 
@@ -453,7 +574,7 @@ async function importData(file) {
   try {
     const backup = JSON.parse(await file.text());
     if (!isValidBackup(backup)) throw new Error("invalid backup");
-    state = {
+    state = migrateState({
       habits: backup.habits.map(habit => ({
         ...habit,
         goal: Math.max(1, Math.min(31, Number(habit.goal))),
@@ -462,8 +583,9 @@ async function importData(file) {
       checks: backup.checks,
       tasks: backup.tasks && typeof backup.tasks === "object" ? backup.tasks : {},
       notes: backup.notes && typeof backup.notes === "object" ? backup.notes : {},
-      notified: {}
-    };
+      notified: {},
+      hideCompletedHabits: Boolean(backup.hideCompletedHabits)
+    });
     saveState();
     renderAll();
     showToast("Данные восстановлены");
@@ -482,6 +604,8 @@ $("#taskReminderEnabled").addEventListener("change", event => {
   $("#taskReminderTimeRow").classList.toggle("hidden", !event.target.checked);
   if (event.target.checked) requestNotificationPermission();
 });
+$("#fillScheduleButton").addEventListener("click", () => setScheduleDays(allDaysForMonth(editingScheduleMonth || selectedDate)));
+$("#clearScheduleButton").addEventListener("click", () => setScheduleDays([]));
 $("#exportDataButton").addEventListener("click", exportData);
 $("#importDataButton").addEventListener("click", () => $("#importDataInput").click());
 $("#importDataInput").addEventListener("change", event => {
@@ -496,12 +620,16 @@ $("#habitForm").addEventListener("submit", event => {
   const reminderEnabled = $("#habitReminderEnabled").checked;
   const reminderTime = $("#habitReminderTime").value || "20:00";
   if (!name) return;
+  const scheduleKey = monthKey(editingScheduleMonth || selectedDate);
+  const scheduleDays = [...selectedScheduleDays].sort((a, b) => a - b);
   if (editingHabitId) {
     const habit = state.habits.find(item => item.id === editingHabitId);
     Object.assign(habit, { name, goal, color: selectedColor, reminderEnabled, reminderTime });
-    showToast("Привычка изменена для всех дат");
+    habit.schedules ||= {};
+    habit.schedules[scheduleKey] = scheduleDays;
+    showToast("Привычка изменена");
   } else {
-    state.habits.push({ id: crypto.randomUUID(), name, goal, color: selectedColor, createdAt: dateKey(new Date()), reminderEnabled, reminderTime });
+    state.habits.push({ id: crypto.randomUUID(), name, goal, color: selectedColor, createdAt: dateKey(new Date()), reminderEnabled, reminderTime, schedules: { [scheduleKey]: scheduleDays } });
     showToast("Привычка добавлена");
   }
   saveState();
@@ -555,12 +683,11 @@ $("#dayNote").addEventListener("input", event => {
   }, 350);
 });
 
+$$('.close-button').forEach(button => button.addEventListener('click', event => {
+  event.preventDefault();
+  button.closest('dialog')?.close();
+}));
 $$(".nav-item").forEach(button => button.addEventListener("click", () => switchScreen(button.dataset.screen)));
-$("#jumpTodayButton").addEventListener("click", () => {
-  selectedDate = startOfDay(new Date());
-  calendarDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
-  renderAll();
-});
 $("#previousMonth").addEventListener("click", () => {
   calendarDate = new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, 1);
   renderCalendar();
@@ -605,3 +732,8 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") checkReminders();
 });
 checkReminders();
+
+
+
+
+

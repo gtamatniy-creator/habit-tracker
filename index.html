@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=6">
+  <link rel="stylesheet" href="styles.css?v=9">
 </head>
 <body>
   <div class="app-shell">
@@ -32,16 +32,13 @@
           </div>
           <div class="progress-ring" id="progressRing"><span id="progressPercent">0%</span></div>
         </article>
-        <div class="section-heading">
-  <h2 id="selectedDateTitle">Сегодня</h2>
-  <div>
-    <label style="font-size:12px;display:block;margin-bottom:4px;">
-      <input type="checkbox" id="hideCompletedHabits">
-      Скрывать выполненные
-    </label>
-    <button class="text-button" id="jumpTodayButton">К сегодня</button>
-  </div>
-</div>
+        <div class="section-heading today-heading">
+          <h2 id="selectedDateTitle">Сегодня</h2>
+          <label class="inline-toggle">
+            <input type="checkbox" id="hideCompletedHabits">
+            <span>Скрывать выполненные</span>
+          </label>
+        </div>
         <div class="habit-list" id="habitList"></div>
 
         <div class="section-heading">
@@ -137,7 +134,7 @@
           <p class="eyebrow" id="dialogEyebrow">НОВАЯ ПРИВЫЧКА</p>
           <h2 id="dialogTitle">Добавить привычку</h2>
         </div>
-        <button class="close-button" value="cancel" aria-label="Закрыть">×</button>
+        <button class="close-button" type="button" value="cancel" aria-label="Закрыть">×</button>
       </div>
       <label>
         Название
@@ -147,6 +144,22 @@
         Цель на месяц
         <div class="goal-input"><input id="habitGoal" type="number" min="1" max="31" value="20" required><span>дней</span></div>
       </label>
+      <fieldset class="schedule-panel">
+        <legend>Расписание</legend>
+        <div class="schedule-header">
+          <strong id="scheduleMonthTitle"></strong>
+          <span class="muted">Выберите даты месяца</span>
+        </div>
+        <div class="schedule-actions">
+          <button class="secondary-button" type="button" id="fillScheduleButton">Заполнить весь месяц</button>
+          <button class="secondary-button" type="button" id="clearScheduleButton">Очистить всё</button>
+        </div>
+        <div class="schedule-weekdays">
+          <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+        </div>
+        <div class="schedule-grid" id="scheduleGrid"></div>
+        <p class="schedule-count" id="scheduleCount">Выбрано дней: 0</p>
+      </fieldset>
       <label class="switch-row">
         <span><strong>Напоминать</strong><small>Только для этой привычки</small></span>
         <input id="habitReminderEnabled" type="checkbox">
@@ -173,7 +186,7 @@
           <p class="eyebrow" id="taskDialogEyebrow">ВАЖНОЕ ДЕЛО</p>
           <h2 id="taskDialogTitle">Добавить дело</h2>
         </div>
-        <button class="close-button" value="cancel" aria-label="Закрыть">×</button>
+        <button class="close-button" type="button" value="cancel" aria-label="Закрыть">×</button>
       </div>
       <label>
         Что нужно сделать
@@ -198,7 +211,7 @@
     <form method="dialog">
       <div class="dialog-header">
         <div><p class="eyebrow">ПЕРЕЙТИ К ДАТЕ</p><h2>Месяц и год</h2></div>
-        <button class="close-button" value="cancel" aria-label="Закрыть">×</button>
+        <button class="close-button" type="button" value="cancel" aria-label="Закрыть">×</button>
       </div>
       <label>Месяц<select id="monthSelect"></select></label>
       <label>Год<select id="yearSelect"></select></label>
@@ -207,6 +220,9 @@
   </dialog>
 
   <div class="toast" id="toast"></div>
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>
+
+
+
